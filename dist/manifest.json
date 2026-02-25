@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Local LLM Assistant",
+  "version": "1.1.0",
+  "description": "Chat, summarize pages, and rewrite text using a local LLM via Ollama.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "storage",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "http://localhost:11434/*",
+    "https://html.duckduckgo.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Open Local LLM Assistant"
+  }
+}

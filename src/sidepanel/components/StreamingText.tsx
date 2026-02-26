@@ -17,7 +17,7 @@ interface Props {
 
 export default React.memo(function StreamingText({ text, tps, isStreaming }: Props) {
   return (
-    <div>
+    <div className="px-1">
       <div className="prose prose-sm dark:prose-invert max-w-none break-words">
         <ReactMarkdown
           skipHtml

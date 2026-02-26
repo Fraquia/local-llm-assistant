@@ -6,3 +6,11 @@ html, body, #root {
   height: 100%;
   margin: 0;
 }
+
+/* Prose code blocks: subtle bg for light + dark */
+.prose :where(code):not(:where(pre *)) {
+  background-color: #f3f4f6;
+}
+.dark .prose :where(code):not(:where(pre *)) {
+  background-color: #1f2937;
+}

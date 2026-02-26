@@ -1,27 +1,37 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { buildChatMessages, buildChatMessagesWithSearch } from '../../shared/prompts';
 import { searchWeb, cleanSearchQuery, optimizeSearchQuery, formatSearchContext } from '../../shared/web-search';
-import type { ChatMessageWithId } from '../../shared/types';
+import type { ChatMessageWithId, InferenceMode } from '../../shared/types';
 import { useChatStorage } from '../hooks/useChatStorage';
 import { useInference } from '../hooks/useInference';
 import { useWebSearch } from '../hooks/useWebSearch';
+import type { UseBrowserInferenceReturn } from '../hooks/useBrowserInference';
 import MessageBubble from './MessageBubble';
 import StreamingText from './StreamingText';
 
 interface Props {
   modelReady: boolean;
   selectedModel: string;
+  inferenceMode: InferenceMode;
+  browserInference: UseBrowserInferenceReturn;
 }
 
-export default function ChatTab({ modelReady, selectedModel }: Props) {
+export default function ChatTab({ modelReady, selectedModel, inferenceMode, browserInference }: Props) {
   const { messages, addMessage, clearAll, bytesInUse, isLoaded } = useChatStorage();
   const [input, setInput] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
-  const { streamingText, isGenerating, tps, error, generate, interrupt } = useInference();
+
+  const ollamaInference = useInference();
   const { webSearchEnabled, setWebSearchEnabled } = useWebSearch();
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
+
+  // Active inference based on mode
+  const activeInference = inferenceMode === 'browser' ? browserInference : ollamaInference;
+  const { streamingText, isGenerating, tps, error, interrupt } = activeInference;
+  const isThinking = inferenceMode === 'browser' ? browserInference.isThinking : false;
 
   const scrollToBottom = useCallback(() => {
     if (scrollRafRef.current) return;
@@ -55,6 +65,8 @@ export default function ChatTab({ modelReady, selectedModel }: Props) {
 
     const newHistory = [...messages, userMessage];
 
+    // Optionally fetch web search context
+    let searchContext = '';
     if (webSearchEnabled) {
       setIsSearching(true);
       try {
@@ -65,12 +77,7 @@ export default function ChatTab({ modelReady, selectedModel }: Props) {
           query = cleanSearchQuery(text);
         }
         const results = await searchWeb(query);
-        const context = formatSearchContext(results);
-        if (context) {
-          const fullMessages = buildChatMessagesWithSearch(newHistory, context);
-          generate(fullMessages, selectedModel);
-          return;
-        }
+        searchContext = formatSearchContext(results);
       } catch (err) {
         console.error('[web-search]', err);
         setSearchError('Web search failed — answering without search results.');
@@ -79,8 +86,16 @@ export default function ChatTab({ modelReady, selectedModel }: Props) {
       }
     }
 
-    const fullMessages = buildChatMessages(newHistory);
-    generate(fullMessages, selectedModel);
+    // Build messages (same for both modes) and dispatch
+    const fullMessages = searchContext
+      ? buildChatMessagesWithSearch(newHistory, searchContext)
+      : buildChatMessages(newHistory);
+
+    if (inferenceMode === 'browser') {
+      browserInference.generate(fullMessages);
+    } else {
+      ollamaInference.generate(fullMessages, selectedModel);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -107,7 +122,7 @@ export default function ChatTab({ modelReady, selectedModel }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+      <div className="flex-1 overflow-y-auto p-3">
         {messages.length === 0 && !isGenerating && (
           <p className="text-center text-gray-400 dark:text-gray-600 text-sm mt-8">
             Start a conversation...
@@ -118,11 +133,16 @@ export default function ChatTab({ modelReady, selectedModel }: Props) {
           <MessageBubble key={msg.id} role={msg.role as 'user' | 'assistant'} content={msg.content} />
         ))}
 
-        {isGenerating && (
-          <div className="flex justify-start mb-3">
-            <div className="max-w-[85%] rounded-lg px-3 py-2 bg-gray-100 dark:bg-gray-800">
-              <StreamingText text={streamingText} tps={tps} isStreaming={true} />
-            </div>
+        {isThinking && !streamingText && (
+          <div className="mb-4 flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+            <span>sto ragionando...</span>
+          </div>
+        )}
+
+        {isGenerating && streamingText && (
+          <div className="mb-4">
+            <StreamingText text={streamingText} tps={tps} isStreaming={true} />
           </div>
         )}
 

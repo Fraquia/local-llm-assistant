@@ -3,8 +3,10 @@ import { MessageType, type ChatMessage } from '../../shared/messages';
 import { buildPageChatMessages, buildPageChatMessagesWithContext, buildPageChatMessagesWithSearch, buildPageChatMessagesWithContextAndSearch } from '../../shared/prompts';
 import { needsRag, chunkText, embedChunks, embedQuery, retrieveTopK, type EmbeddedChunk } from '../../shared/rag';
 import { searchWeb, cleanSearchQuery, optimizeSearchQuery, formatSearchContext } from '../../shared/web-search';
+import type { InferenceMode } from '../../shared/types';
 import { useInference } from '../hooks/useInference';
 import { useWebSearch } from '../hooks/useWebSearch';
+import type { UseBrowserInferenceReturn } from '../hooks/useBrowserInference';
 import MessageBubble from './MessageBubble';
 import StreamingText from './StreamingText';
 
@@ -15,9 +17,11 @@ interface ChatMessageWithId extends ChatMessage {
 interface Props {
   modelReady: boolean;
   selectedModel: string;
+  inferenceMode: InferenceMode;
+  browserInference: UseBrowserInferenceReturn;
 }
 
-export default function PageChatTab({ modelReady, selectedModel }: Props) {
+export default function PageChatTab({ modelReady, selectedModel, inferenceMode, browserInference }: Props) {
   const [messages, setMessages] = useState<ChatMessageWithId[]>([]);
   const [input, setInput] = useState('');
   const [pageContent, setPageContent] = useState('');
@@ -29,10 +33,17 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
   const [ragWarning, setRagWarning] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
-  const { streamingText, isGenerating, tps, error, generate, interrupt } = useInference();
+
+  const ollamaInference = useInference();
   const { webSearchEnabled, setWebSearchEnabled } = useWebSearch();
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
+
+  // Active inference based on mode
+  const activeInference = inferenceMode === 'browser' ? browserInference : ollamaInference;
+  const { streamingText, isGenerating, tps, error, interrupt } = activeInference;
+  const isThinking = inferenceMode === 'browser' ? browserInference.isThinking : false;
 
   const scrollToBottom = useCallback(() => {
     if (scrollRafRef.current) return;
@@ -70,8 +81,8 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
       setPageContent(response.content);
       setPageTitle(response.title || 'Untitled');
 
-      // If page is long enough for RAG, index it
-      if (needsRag(response.content)) {
+      // RAG indexing only in Ollama mode
+      if (inferenceMode === 'ollama' && needsRag(response.content)) {
         setIsEmbedding(true);
         try {
           const chunks = chunkText(response.content);
@@ -91,7 +102,7 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
     } finally {
       setIsLoadingPage(false);
     }
-  }, []);
+  }, [inferenceMode]);
 
   // Auto-fetch page content on mount
   useEffect(() => {
@@ -140,7 +151,16 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
       }
     }
 
-    // RAG path: embed query, retrieve top chunks, build context
+    // === BROWSER MODE: no RAG, use truncation path with shared prompt builders ===
+    if (inferenceMode === 'browser') {
+      const fullMessages = searchContext
+        ? buildPageChatMessagesWithSearch(pageContent, newHistory, searchContext)
+        : buildPageChatMessages(pageContent, newHistory);
+      browserInference.generate(fullMessages);
+      return;
+    }
+
+    // === OLLAMA MODE: RAG path or truncation fallback ===
     if (embeddedChunks) {
       try {
         const queryEmb = await embedQuery(text);
@@ -148,19 +168,18 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
         const fullMessages = searchContext
           ? buildPageChatMessagesWithContextAndSearch(topChunks, newHistory, searchContext)
           : buildPageChatMessagesWithContext(topChunks, newHistory);
-        generate(fullMessages, selectedModel);
+        ollamaInference.generate(fullMessages, selectedModel);
       } catch {
-        // Fallback to truncation if embedding fails mid-session
         const fullMessages = searchContext
           ? buildPageChatMessagesWithSearch(pageContent, newHistory, searchContext)
           : buildPageChatMessages(pageContent, newHistory);
-        generate(fullMessages, selectedModel);
+        ollamaInference.generate(fullMessages, selectedModel);
       }
     } else {
       const fullMessages = searchContext
         ? buildPageChatMessagesWithSearch(pageContent, newHistory, searchContext)
         : buildPageChatMessages(pageContent, newHistory);
-      generate(fullMessages, selectedModel);
+      ollamaInference.generate(fullMessages, selectedModel);
     }
   };
 
@@ -181,6 +200,7 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
   };
 
   const hasPage = !!pageContent;
+  const isEmbeddingActive = inferenceMode === 'ollama' && isEmbedding;
 
   return (
     <div className="flex flex-col h-full">
@@ -188,15 +208,18 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
       <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
         {isLoadingPage ? (
           <span className="text-xs text-gray-400">Loading page...</span>
-        ) : isEmbedding ? (
+        ) : isEmbeddingActive ? (
           <span className="text-xs text-blue-600 dark:text-blue-400 animate-pulse">Indexing page...</span>
         ) : pageError ? (
           <span className="text-xs text-red-600 dark:text-red-400">{pageError}</span>
         ) : (
           <span className="text-xs text-gray-600 dark:text-gray-400 truncate flex-1" title={pageTitle}>
             {pageTitle}
-            {embeddedChunks && (
+            {inferenceMode === 'ollama' && embeddedChunks && (
               <span className="ml-1.5 text-[10px] text-blue-500">({embeddedChunks.length} chunks indexed)</span>
+            )}
+            {inferenceMode === 'browser' && hasPage && (
+              <span className="ml-1.5 text-[10px] text-purple-500">(browser mode)</span>
             )}
           </span>
         )}
@@ -205,7 +228,7 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
         )}
         <button
           onClick={handleRefresh}
-          disabled={isLoadingPage || isGenerating || isEmbedding}
+          disabled={isLoadingPage || isGenerating || isEmbeddingActive}
           className="shrink-0 px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 border border-gray-300 dark:border-gray-600 rounded transition-colors disabled:opacity-50"
         >
           Refresh Page
@@ -213,7 +236,7 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+      <div className="flex-1 overflow-y-auto p-3">
         {!hasPage && !isLoadingPage && !pageError && (
           <p className="text-center text-gray-400 dark:text-gray-600 text-sm mt-8">
             Navigate to a page to start chatting about it.
@@ -230,11 +253,16 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
           <MessageBubble key={msg.id} role={msg.role as 'user' | 'assistant'} content={msg.content} />
         ))}
 
-        {isGenerating && (
-          <div className="flex justify-start mb-3">
-            <div className="max-w-[85%] rounded-lg px-3 py-2 bg-gray-100 dark:bg-gray-800">
-              <StreamingText text={streamingText} tps={tps} isStreaming={true} />
-            </div>
+        {isThinking && !streamingText && (
+          <div className="mb-4 flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+            <span>sto ragionando...</span>
+          </div>
+        )}
+
+        {isGenerating && streamingText && (
+          <div className="mb-4">
+            <StreamingText text={streamingText} tps={tps} isStreaming={true} />
           </div>
         )}
 
@@ -274,7 +302,7 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
               !hasPage ? 'Load a page first' :
               'Ask about this page...'
             }
-            disabled={!modelReady || !hasPage || isEmbedding}
+            disabled={!modelReady || !hasPage || isEmbeddingActive}
             rows={2}
             className="flex-1 resize-none rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           />
@@ -289,7 +317,7 @@ export default function PageChatTab({ modelReady, selectedModel }: Props) {
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || !modelReady || !hasPage || isEmbedding || isSearching}
+                disabled={!input.trim() || !modelReady || !hasPage || isEmbeddingActive || isSearching}
                 className="px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50"
               >
                 Send

@@ -47,14 +47,25 @@ function extractUrl(href: string): string {
 
 export async function searchWeb(query: string): Promise<WebSearchResult[]> {
   const body = new URLSearchParams({ q: query });
-  const response = await fetch(DDG_BASE, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    },
-    body,
-  });
+
+  let response: Response;
+  try {
+    response = await fetch(DDG_BASE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      },
+      body,
+    });
+  } catch {
+    // CORS or network error — likely Office Online or blocked environment
+    throw new Error('Web search unavailable in this environment (CORS blocked).');
+  }
+
+  if (response.status === 403) {
+    throw new Error('Web search blocked (403). Try disabling web search or use a desktop Office app.');
+  }
 
   if (!response.ok) {
     throw new Error(`Search failed: ${response.status} ${response.statusText}`);

@@ -70,3 +70,10 @@ DS_Store
 design-log/
 CLAUDE.md
 dist.zip
+.*.zip
+
+# Office Add-in dev certificates (private keys)
+certs/
+
+# Build output
+dist/

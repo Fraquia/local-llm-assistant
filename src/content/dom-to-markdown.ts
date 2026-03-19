@@ -266,6 +266,17 @@ export function domToMarkdown(root: HTMLElement): string {
   return chunks.join('').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+export type SiteType = 'google-slides' | 'google-docs' | 'gmail' | 'generic';
+
+export function detectSiteType(): SiteType {
+  const host = location.hostname;
+  const path = location.pathname;
+  if (host === 'docs.google.com' && path.startsWith('/presentation/')) return 'google-slides';
+  if (host === 'docs.google.com' && path.startsWith('/document/')) return 'google-docs';
+  if (host === 'mail.google.com') return 'gmail';
+  return 'generic';
+}
+
 export function findContentRoot(): HTMLElement {
   // If multiple articles, use their common parent
   const articles = document.querySelectorAll('article');

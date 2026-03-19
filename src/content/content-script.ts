@@ -1,7 +1,10 @@
 // Content script — extracts page content as Markdown
 // Vite bundles imports into a single IIFE for content script entry point
 
-import { domToMarkdown, findContentRoot } from './dom-to-markdown';
+import { domToMarkdown, findContentRoot, detectSiteType } from './dom-to-markdown';
+import { extractGoogleSlides } from './google-slides-extractor';
+import { extractGoogleDocs } from './google-docs-extractor';
+import { extractGmail } from './gmail-extractor';
 
 const MSG_GET_PAGE_CONTENT = 'GET_PAGE_CONTENT';
 const MSG_GET_SELECTED_TEXT = 'GET_SELECTED_TEXT';
@@ -9,8 +12,25 @@ const MSG_GET_SELECTED_TEXT = 'GET_SELECTED_TEXT';
 const MAX_OUTPUT_CHARS = 48_000;
 
 function extractPageText(): string {
-  const root = findContentRoot();
-  const markdown = domToMarkdown(root);
+  const siteType = detectSiteType();
+
+  let markdown: string;
+  switch (siteType) {
+    case 'google-slides':
+      markdown = extractGoogleSlides();
+      break;
+    case 'google-docs':
+      markdown = extractGoogleDocs();
+      break;
+    case 'gmail':
+      markdown = extractGmail();
+      break;
+    default: {
+      const root = findContentRoot();
+      markdown = domToMarkdown(root);
+      break;
+    }
+  }
 
   if (!markdown) {
     // Safety fallback
